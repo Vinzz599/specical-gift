@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive 3D Particle System</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 12px;
+            padding: 20px;
+            color: white;
+            max-width: 320px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        h2 {
+            font-size: 20px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section {
+            margin-bottom: 20px;
+        }
+
+        .section h3 {
+            font-size: 14px;
+            margin-bottom: 10px;
+            opacity: 0.9;
+        }
+
+        .btn-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s;
+            font-weight: 500;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .shape-btn {
+            background: #4a5568;
+            color: white;
+        }
+
+        .shape-btn.active {
+            background: #7c3aed;
+        }
+
+        .camera-btn {
+            background: #3b82f6;
+            color: white;
+            grid-column: 1 / -1;
+            margin-bottom: 10px;
+        }
+
+        .camera-btn.active {
+            background: #ef4444;
+        }
+
+        .color-palette {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .color-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .color-btn.active {
+            border-color: white;
+            transform: scale(1.2);
+        }
+
+        .info {
+            font-size: 12px;
+            color: #a0aec0;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #video {
+            display: none;
+        }
+
+        .sparkle {
+            display: inline-block;
+            animation: sparkle 1.5s infinite;
+        }
+
+        @keyframes sparkle {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <video id="video" autoplay playsinline></video>
+
+    <div id="controls">
+        <h2><span class="sparkle">✨</span> Particle Controller</h2>
+
+        <div class="section">
+            <button class="camera-btn" id="cameraBtn">
+                📷 Start Hand Tracking
+            </button>
+        </div>
+
+        <div class="section">
+            <h3>🎨 Shapes</h3>
+            <div class="btn-grid" id="shapeButtons"></div>
+        </div>
+
+        <div class="section">
+            <h3>🎨 Colors</h3>
+            <div class="color-palette" id="colorButtons"></div>
+        </div>
+
+        <div class="info" id="infoText">
+            🖱️ Move your mouse to interact!
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const shapes = [
+            { name: 'heart', label: '❤️ Heart' },
+            { name: 'lily', label: '🌺 Lily' },
+            { name: 'saturn', label: '🪐 Saturn' },
+            { name: 'fireworks', label: '🎆 Fireworks' },
+            { name: 'ball', label: '⚽ Ball' },
+            { name: 'iloveyou', label: '💕 My Sign for u' }
+        ];
+
+        const colors = [
+            '#ff0080', '#00ff80', '#0080ff', '#ffff00', '#ff00ff', '#00ffff'
+        ];
+
+        // State
+        let currentShape = 'heart';
+        let currentColor = '#ff0080';
+        let isHandTracking = false;
+        let handPosition = { x: 0, y: 0 };
+
+        // Three.js setup
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        container.appendChild(renderer.domElement);
+        camera.position.z = 50;
+
+        let particles = null;
+
+        // Create particles
+        function createParticles(shape, color) {
+            if (particles) {
+                scene.remove(particles);
+                particles.geometry.dispose();
+                particles.material.dispose();
+            }
+
+            const particleCount = 5000;
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+
+            for (let i = 0; i < particleCount; i++) {
+                const i3 = i * 3;
+                const pos = getShapePosition(shape, i, particleCount);
+                positions[i3] = pos.x;
+                positions[i3 + 1] = pos.y;
+                positions[i3 + 2] = pos.z;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+            const material = new THREE.PointsMaterial({
+                color: color,
+                size: 0.3,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+        }
+
+        // Get shape positions
+        function getShapePosition(shape, index, total) {
+            const t = index / total;
+            const angle = t * Math.PI * 2;
+            const radius = 20;
+
+            switch (shape) {
+                case 'heart':
+                    const heartX = 16 * Math.pow(Math.sin(angle), 3);
+                    const heartY = 13 * Math.cos(angle) - 5 * Math.cos(2 * angle) - 2 * Math.cos(3 * angle) - Math.cos(4 * angle);
+                    return {
+                        x: heartX + (Math.random() - 0.5) * 5,
+                        y: heartY + (Math.random() - 0.5) * 5,
+                        z: (Math.random() - 0.5) * 10
+                    };
+
+                case 'lily':
+                    const petalAngle = angle * 6;
+                    const petalRadius = radius * (0.5 + 0.5 * Math.sin(petalAngle));
+                    return {
+                        x: petalRadius * Math.cos(angle) + (Math.random() - 0.5) * 3,
+                        y: petalRadius * Math.sin(angle) + (Math.random() - 0.5) * 3,
+                        z: Math.sin(angle * 3) * 5 + (Math.random() - 0.5) * 3
+                    };
+
+                case 'saturn':
+                    const isSphere = Math.random() > 0.4;
+                    if (isSphere) {
+                        const phi = Math.acos(2 * Math.random() - 1);
+                        const theta = Math.random() * Math.PI * 2;
+                        return {
+                            x: 15 * Math.sin(phi) * Math.cos(theta),
+                            y: 15 * Math.sin(phi) * Math.sin(theta),
+                            z: 15 * Math.cos(phi)
+                        };
+                    } else {
+                        const ringAngle = Math.random() * Math.PI * 2;
+                        const ringR = 15 + Math.random() * 10;
+                        return {
+                            x: ringR * Math.cos(ringAngle),
+                            y: (Math.random() - 0.5) * 2,
+                            z: ringR * Math.sin(ringAngle) * 0.3
+                        };
+                    }
+
+                case 'fireworks':
+                    const fireworkAngle = Math.random() * Math.PI * 2;
+                    const fireworkPhi = Math.random() * Math.PI;
+                    const fireworkRadius = Math.pow(Math.random(), 0.5) * 30;
+                    return {
+                        x: fireworkRadius * Math.sin(fireworkPhi) * Math.cos(fireworkAngle),
+                        y: fireworkRadius * Math.sin(fireworkPhi) * Math.sin(fireworkAngle) - 10,
+                        z: fireworkRadius * Math.cos(fireworkPhi)
+                    };
+
+                case 'ball':
+                    const phi = Math.acos(2 * Math.random() - 1);
+                    const theta = Math.random() * Math.PI * 2;
+                    return {
+                        x: radius * Math.sin(phi) * Math.cos(theta),
+                        y: radius * Math.sin(phi) * Math.sin(theta),
+                        z: radius * Math.cos(phi)
+                    };
+
+                case 'iloveyou':
+                    if (t < 0.3) {
+                        const cAngle = (t / 0.3) * Math.PI * 1.5 + Math.PI * 0.25;
+                        return {
+                            x: -15 + radius * Math.cos(cAngle),
+                            y: radius * Math.sin(cAngle),
+                            z: (Math.random() - 0.5) * 5
+                        };
+                    } else {
+                        const localT = (t - 0.3) / 0.7;
+                        const heartAngle = localT * Math.PI * 2;
+                        const hx = 8 * Math.pow(Math.sin(heartAngle), 3);
+                        const hy = 6.5 * Math.cos(heartAngle) - 2.5 * Math.cos(2 * heartAngle) - Math.cos(3 * heartAngle) - 0.5 * Math.cos(4 * heartAngle);
+                        return {
+                            x: 10 + hx + (Math.random() - 0.5) * 3,
+                            y: hy + (Math.random() - 0.5) * 3,
+                            z: (Math.random() - 0.5) * 5
+                        };
+                    }
+
+                default:
+                    return {
+                        x: (Math.random() - 0.5) * 40,
+                        y: (Math.random() - 0.5) * 40,
+                        z: (Math.random() - 0.5) * 40
+                    };
+            }
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (particles) {
+                const positions = particles.geometry.attributes.position.array;
+                const time = Date.now() * 0.001;
+
+                for (let i = 0; i < positions.length; i += 3) {
+                    const x = positions[i];
+                    const y = positions[i + 1];
+                    const z = positions[i + 2];
+
+                    const dx = x - handPosition.x;
+                    const dy = y - handPosition.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    const scale = 1 + Math.sin(time * 2 + dist * 0.1) * 0.3;
+                    positions[i + 2] = z + Math.sin(time + i) * scale * 0.5;
+                }
+
+                particles.geometry.attributes.position.needsUpdate = true;
+                particles.rotation.y += 0.002;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Mouse tracking
+        document.addEventListener('mousemove', (e) => {
+            const x = (e.clientX / window.innerWidth) * 2 - 1;
+            const y = -(e.clientY / window.innerHeight) * 2 + 1;
+            handPosition = { x: x * 30, y: y * 30 };
+        });
+
+        // Camera tracking
+        const video = document.getElementById('video');
+        const cameraBtn = document.getElementById('cameraBtn');
+
+        cameraBtn.addEventListener('click', async () => {
+            if (!isHandTracking) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+                    video.srcObject = stream;
+                    isHandTracking = true;
+                    cameraBtn.textContent = '📷 Stop Camera';
+                    cameraBtn.classList.add('active');
+                    document.getElementById('infoText').textContent = '📱 Camera active! Move your hand!';
+                } catch (error) {
+                    alert('Tidak bisa mengakses kamera. Pastikan izin sudah diberikan dan gunakan HTTPS atau localhost.');
+                }
+            } else {
+                const tracks = video.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
+                video.srcObject = null;
+                isHandTracking = false;
+                cameraBtn.textContent = '📷 Start Hand Tracking';
+                cameraBtn.classList.remove('active');
+                document.getElementById('infoText').textContent = '🖱️ Move your mouse to interact!';
+            }
+        });
+
+        // Create UI buttons
+        const shapeButtonsContainer = document.getElementById('shapeButtons');
+        shapes.forEach(shape => {
+            const btn = document.createElement('button');
+            btn.className = 'shape-btn';
+            btn.textContent = shape.label;
+            if (shape.name === currentShape) btn.classList.add('active');
+            
+            btn.addEventListener('click', () => {
+                currentShape = shape.name;
+                createParticles(currentShape, currentColor);
+                document.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+            
+            shapeButtonsContainer.appendChild(btn);
+        });
+
+        const colorButtonsContainer = document.getElementById('colorButtons');
+        colors.forEach(color => {
+            const btn = document.createElement('div');
+            btn.className = 'color-btn';
+            btn.style.backgroundColor = color;
+            if (color === currentColor) btn.classList.add('active');
+            
+            btn.addEventListener('click', () => {
+                currentColor = color;
+                if (particles) {
+                    particles.material.color.set(color);
+                }
+                document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+            
+            colorButtonsContainer.appendChild(btn);
+        });
+
+        // Window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Initialize
+        createParticles(currentShape, currentColor);
+        animate();
+    </script>
+</body>
+</html>
